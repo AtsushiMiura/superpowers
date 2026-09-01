@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 from pathlib import Path
@@ -13,6 +14,7 @@ ALLOW_IMPLICIT = frozenset(
         "verification-before-completion",
     }
 )
+PLUGIN_DISPLAY_NAME = "Superpowers (My Policy)"
 
 TOP_LEVEL_KEY = re.compile(r"^([A-Za-z0-9_.-]+)\s*:")
 POLICY_KEY = re.compile(r'''^(?:policy|"policy"|'policy')\s*:''')
@@ -110,6 +112,27 @@ def render_metadata(current: str, allow_implicit: bool) -> str:
     return "".join(lines)
 
 
+def apply_plugin_display_name(root: Path, check: bool) -> bool:
+    manifest_path = root / ".codex-plugin" / "plugin.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        display_name = manifest["interface"]["displayName"]
+    except (FileNotFoundError, json.JSONDecodeError, KeyError, TypeError) as error:
+        raise PolicyError(f"invalid Codex plugin manifest: {manifest_path}") from error
+
+    if display_name == PLUGIN_DISPLAY_NAME:
+        return False
+    if check:
+        raise PolicyError("plugin display name drift")
+
+    manifest["interface"]["displayName"] = PLUGIN_DISPLAY_NAME
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    return True
+
+
 def apply_policy(root: Path, check: bool) -> list[str]:
     skills = discover_skills(root)
     missing = sorted(ALLOW_IMPLICIT.difference(skills))
@@ -167,6 +190,7 @@ def main() -> int:
 
     try:
         changed = apply_policy(args.root.resolve(), args.check)
+        display_name_changed = apply_plugin_display_name(args.root.resolve(), args.check)
     except (OSError, PolicyError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
@@ -175,7 +199,11 @@ def main() -> int:
         skill_count = len(discover_skills(args.root.resolve()))
         print(f"checked {skill_count} skill policies; no drift")
     else:
-        print(f"updated {len(changed)} skill policies")
+        display_name_status = "updated" if display_name_changed else "unchanged"
+        print(
+            f"updated {len(changed)} skill policies; "
+            f"plugin display name {display_name_status}"
+        )
     return 0
 
 

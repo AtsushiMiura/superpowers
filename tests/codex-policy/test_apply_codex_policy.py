@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 import tempfile
@@ -12,9 +13,21 @@ SCRIPT = REPO_ROOT / "scripts" / "apply-codex-policy.py"
 
 
 class ApplyCodexPolicyTests(unittest.TestCase):
+    def make_manifest(self, root: Path) -> None:
+        manifest = root / ".codex-plugin" / "plugin.json"
+        if manifest.exists():
+            return
+        manifest.parent.mkdir(parents=True)
+        manifest.write_text(
+            '{\n  "name": "superpowers",\n  "interface": {\n'
+            '    "displayName": "Superpowers"\n  }\n}\n',
+            encoding="utf-8",
+        )
+
     def make_skill(
         self, root: Path, name: str, metadata: str | None = None
     ) -> Path:
+        self.make_manifest(root)
         skill = root / "skills" / name
         skill.mkdir(parents=True)
         (skill / "SKILL.md").write_text(
@@ -42,6 +55,12 @@ class ApplyCodexPolicyTests(unittest.TestCase):
             encoding="utf-8"
         )
 
+    def display_name(self, root: Path) -> str:
+        manifest = root / ".codex-plugin" / "plugin.json"
+        return json.loads(manifest.read_text(encoding="utf-8"))["interface"][
+            "displayName"
+        ]
+
     def test_apply_creates_allowlisted_and_explicit_only_sidecars(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -62,6 +81,7 @@ class ApplyCodexPolicyTests(unittest.TestCase):
                 "allow_implicit_invocation: false",
                 self.metadata(root, "brainstorming"),
             )
+            self.assertEqual(self.display_name(root), "Superpowers (My Policy)")
 
     def test_apply_preserves_unrelated_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -102,6 +122,26 @@ class ApplyCodexPolicyTests(unittest.TestCase):
             self.assertEqual(first.returncode, 0, first.stderr)
             self.assertEqual(second.returncode, 0, second.stderr)
             self.assertEqual(before, after)
+            self.assertEqual(self.display_name(root), "Superpowers (My Policy)")
+
+    def test_check_reports_plugin_display_name_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_complete_fixture(root)
+            applied = self.run_script(root)
+            self.assertEqual(applied.returncode, 0, applied.stderr)
+            manifest = root / ".codex-plugin" / "plugin.json"
+            manifest.write_text(
+                manifest.read_text(encoding="utf-8").replace(
+                    "Superpowers (My Policy)", "Superpowers"
+                ),
+                encoding="utf-8",
+            )
+
+            result = self.run_script(root, check=True)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("plugin display name drift", result.stderr)
 
     def test_check_reports_policy_drift(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
