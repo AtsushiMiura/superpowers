@@ -227,6 +227,45 @@ class ApplyCodexPolicyTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("checked 3 skill policies; no drift", result.stdout)
 
+    def test_noncanonical_invocation_keys_fail_without_modifying_metadata(self) -> None:
+        metadata_values = (
+            "policy:\n    allow_implicit_invocation: null\n",
+            'policy:\n  "allow_implicit_invocation": null\n',
+        )
+        for metadata in metadata_values:
+            with self.subTest(metadata=metadata), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self.make_skill(root, "systematic-debugging")
+                self.make_skill(root, "verification-before-completion")
+                skill = self.make_skill(root, "brainstorming", metadata)
+                metadata_path = skill / "agents" / "openai.yaml"
+                before = metadata_path.read_bytes()
+
+                result = self.run_script(root)
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("unsupported allow_implicit_invocation", result.stderr)
+                self.assertEqual(metadata_path.read_bytes(), before)
+
+    def test_quoted_policy_key_fails_without_appending_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_skill(root, "systematic-debugging")
+            self.make_skill(root, "verification-before-completion")
+            skill = self.make_skill(
+                root,
+                "brainstorming",
+                '"policy":\n  allow_implicit_invocation: true\n',
+            )
+            metadata_path = skill / "agents" / "openai.yaml"
+            before = metadata_path.read_bytes()
+
+            result = self.run_script(root)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("unsupported policy key", result.stderr)
+            self.assertEqual(metadata_path.read_bytes(), before)
+
 
 if __name__ == "__main__":
     unittest.main()

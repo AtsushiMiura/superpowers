@@ -15,8 +15,11 @@ ALLOW_IMPLICIT = frozenset(
 )
 
 TOP_LEVEL_KEY = re.compile(r"^([A-Za-z0-9_.-]+)\s*:")
+POLICY_KEY = re.compile(r'''^(?:policy|"policy"|'policy')\s*:''')
 POLICY_HEADER = re.compile(r"^policy:\s*(?:#.*)?$")
-INVOCATION_KEY = re.compile(r"^  allow_implicit_invocation\s*:")
+INVOCATION_KEY = re.compile(
+    r'''^\s+(?:allow_implicit_invocation|"allow_implicit_invocation"|'allow_implicit_invocation')\s*:'''
+)
 INVOCATION_ENTRY = re.compile(
     r"^  allow_implicit_invocation:\s*(?:true|false)\s*(?:#.*)?$"
 )
@@ -56,8 +59,7 @@ def render_metadata(current: str, allow_implicit: bool) -> str:
     policy_indexes: list[int] = []
     for index, line in enumerate(lines):
         content = line.rstrip("\r\n")
-        key_match = TOP_LEVEL_KEY.match(content)
-        if key_match and key_match.group(1) == "policy":
+        if POLICY_KEY.match(content):
             if not POLICY_HEADER.fullmatch(content):
                 raise PolicyError("unsupported policy key or inline mapping")
             policy_indexes.append(index)
