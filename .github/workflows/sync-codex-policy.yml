@@ -1,0 +1,59 @@
+name: Sync Codex policy branch
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-codex-policy
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    if: github.repository == 'AtsushiMiura/superpowers'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Test policy generator
+        run: python3 -m unittest discover -s tests/codex-policy -p 'test_*.py' -v
+
+      - name: Sync upstream main
+        run: |
+          git remote add upstream https://github.com/obra/superpowers.git
+          git remote set-url --push upstream DISABLED
+          git fetch upstream main
+          git merge --no-edit upstream/main
+          git push origin HEAD:main
+
+      - name: Generate policy branch
+        run: |
+          git switch -C my-codex-policy main
+          python3 scripts/apply-codex-policy.py
+          python3 scripts/apply-codex-policy.py --check
+          git add skills
+
+      - name: Publish policy branch when its tree changed
+        run: |
+          generated_tree="$(git write-tree)"
+          git fetch origin my-codex-policy:refs/remotes/origin/my-codex-policy || true
+          published_tree="$(git rev-parse origin/my-codex-policy^{tree} 2>/dev/null || true)"
+          if [ "$generated_tree" = "$published_tree" ]; then
+            echo "Policy branch is already current."
+            exit 0
+          fi
+          upstream_short="$(git rev-parse --short main)"
+          git commit -m "chore: generate Codex policy for ${upstream_short}"
+          git push --force-with-lease origin HEAD:my-codex-policy
