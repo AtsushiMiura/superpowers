@@ -43,7 +43,7 @@ jobs:
           git switch -C my-codex-policy main
           python3 scripts/apply-codex-policy.py
           python3 scripts/apply-codex-policy.py --check
-          git add skills
+          git add skills .codex-plugin/plugin.json
 
       - name: Publish policy branch when its tree changed
         run: |
