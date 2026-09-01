@@ -133,6 +133,100 @@ class ApplyCodexPolicyTests(unittest.TestCase):
             self.assertIn("verification-before-completion", apply_result.stderr)
             self.assertIn("verification-before-completion", check_result.stderr)
 
+    def test_unsupported_invocation_value_fails_without_modifying_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_skill(root, "systematic-debugging")
+            self.make_skill(root, "verification-before-completion")
+            skill = self.make_skill(
+                root,
+                "brainstorming",
+                "policy:\n  allow_implicit_invocation: null\n",
+            )
+            metadata_path = skill / "agents" / "openai.yaml"
+            before = metadata_path.read_bytes()
+
+            result = self.run_script(root)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("unsupported allow_implicit_invocation", result.stderr)
+            self.assertEqual(metadata_path.read_bytes(), before)
+
+    def test_duplicate_invocation_keys_fail(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_skill(root, "systematic-debugging")
+            self.make_skill(root, "verification-before-completion")
+            self.make_skill(
+                root,
+                "brainstorming",
+                "policy:\n"
+                "  allow_implicit_invocation: true\n"
+                "  allow_implicit_invocation: null\n",
+            )
+
+            result = self.run_script(root)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("duplicate allow_implicit_invocation", result.stderr)
+
+    def test_spaced_policy_key_fails_without_appending_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_skill(root, "systematic-debugging")
+            self.make_skill(root, "verification-before-completion")
+            skill = self.make_skill(
+                root,
+                "brainstorming",
+                "policy :\n  allow_implicit_invocation: true\n",
+            )
+            metadata_path = skill / "agents" / "openai.yaml"
+            before = metadata_path.read_bytes()
+
+            result = self.run_script(root)
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("unsupported policy key", result.stderr)
+            self.assertEqual(metadata_path.read_bytes(), before)
+
+    def test_apply_preserves_crlf_in_unrelated_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_skill(root, "systematic-debugging")
+            self.make_skill(root, "verification-before-completion")
+            skill = self.make_skill(
+                root,
+                "brainstorming",
+                "interface:\r\n"
+                "  display_name: Brainstorming\r\n"
+                "policy:\r\n"
+                "  allow_implicit_invocation: true\r\n",
+            )
+            metadata_path = skill / "agents" / "openai.yaml"
+
+            result = self.run_script(root)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                metadata_path.read_bytes(),
+                b"interface:\r\n"
+                b"  display_name: Brainstorming\r\n"
+                b"policy:\r\n"
+                b"  allow_implicit_invocation: false\r\n",
+            )
+
+    def test_check_reports_number_of_discovered_skills(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_complete_fixture(root)
+            applied = self.run_script(root)
+            self.assertEqual(applied.returncode, 0, applied.stderr)
+
+            result = self.run_script(root, check=True)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("checked 3 skill policies; no drift", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

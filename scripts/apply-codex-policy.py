@@ -14,8 +14,9 @@ ALLOW_IMPLICIT = frozenset(
     }
 )
 
-TOP_LEVEL_KEY = re.compile(r"^([A-Za-z0-9_.-]+):")
+TOP_LEVEL_KEY = re.compile(r"^([A-Za-z0-9_.-]+)\s*:")
 POLICY_HEADER = re.compile(r"^policy:\s*(?:#.*)?$")
+INVOCATION_KEY = re.compile(r"^  allow_implicit_invocation\s*:")
 INVOCATION_ENTRY = re.compile(
     r"^  allow_implicit_invocation:\s*(?:true|false)\s*(?:#.*)?$"
 )
@@ -58,7 +59,7 @@ def render_metadata(current: str, allow_implicit: bool) -> str:
         key_match = TOP_LEVEL_KEY.match(content)
         if key_match and key_match.group(1) == "policy":
             if not POLICY_HEADER.fullmatch(content):
-                raise PolicyError("unsupported inline policy mapping")
+                raise PolicyError("unsupported policy key or inline mapping")
             policy_indexes.append(index)
 
     if len(policy_indexes) > 1:
@@ -84,13 +85,16 @@ def render_metadata(current: str, allow_implicit: bool) -> str:
     invocation_indexes = [
         index
         for index in range(policy_index + 1, block_end)
-        if INVOCATION_ENTRY.fullmatch(lines[index].rstrip("\r\n"))
+        if INVOCATION_KEY.match(lines[index].rstrip("\r\n"))
     ]
     if len(invocation_indexes) > 1:
         raise PolicyError("duplicate allow_implicit_invocation entries")
 
     if invocation_indexes:
         index = invocation_indexes[0]
+        content = lines[index].rstrip("\r\n")
+        if not INVOCATION_ENTRY.fullmatch(content):
+            raise PolicyError("unsupported allow_implicit_invocation entry")
         lines[index] = (
             f"  allow_implicit_invocation: {value}{_line_ending(lines[index])}"
         )
@@ -113,18 +117,19 @@ def apply_policy(root: Path, check: bool) -> list[str]:
     changed: list[str] = []
     for name, skill_dir in skills.items():
         metadata_path = skill_dir / "agents" / "openai.yaml"
-        current = (
-            metadata_path.read_text(encoding="utf-8")
-            if metadata_path.exists()
-            else ""
-        )
+        if metadata_path.exists():
+            with metadata_path.open("r", encoding="utf-8", newline="") as metadata:
+                current = metadata.read()
+        else:
+            current = ""
         expected = render_metadata(current, name in ALLOW_IMPLICIT)
         if current == expected:
             continue
         changed.append(name)
         if not check:
             metadata_path.parent.mkdir(parents=True, exist_ok=True)
-            metadata_path.write_text(expected, encoding="utf-8")
+            with metadata_path.open("w", encoding="utf-8", newline="") as metadata:
+                metadata.write(expected)
 
     if check and changed:
         raise PolicyError(f"policy drift: {', '.join(changed)}")
@@ -133,7 +138,8 @@ def apply_policy(root: Path, check: bool) -> list[str]:
         drift = []
         for name, skill_dir in skills.items():
             metadata_path = skill_dir / "agents" / "openai.yaml"
-            current = metadata_path.read_text(encoding="utf-8")
+            with metadata_path.open("r", encoding="utf-8", newline="") as metadata:
+                current = metadata.read()
             if render_metadata(current, name in ALLOW_IMPLICIT) != current:
                 drift.append(name)
         if drift:
@@ -163,8 +169,11 @@ def main() -> int:
         print(f"error: {error}", file=sys.stderr)
         return 1
 
-    action = "checked" if args.check else "updated"
-    print(f"{action} {len(changed)} skill policies")
+    if args.check:
+        skill_count = len(discover_skills(args.root.resolve()))
+        print(f"checked {skill_count} skill policies; no drift")
+    else:
+        print(f"updated {len(changed)} skill policies")
     return 0
 
 
